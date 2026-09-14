@@ -13,7 +13,7 @@ inputs:
       or an http(s) URL for Streamable HTTP. Split on whitespace; no quoting.
     required: true
   version:
-    description: "Version of mcpcheck to run, as an npm dist-tag or exact version."
+    description: "Version of mcpcheck to run: an npm dist-tag or version, or the path of a packed tarball (to test an unreleased build)."
     required: false
     default: "latest"
   working-directory:
@@ -105,14 +105,19 @@ runs:
           args+=(--ignore "contract-drift${MC_IGNORE:+,$MC_IGNORE}")
         fi
 
-        pkg="mcpcheck@${MC_VERSION}"
+        # A dist-tag or version from npm, or a path to a packed tarball (a build
+        # of an unreleased mcpcheck — the self-test uses this).
+        case "$MC_VERSION" in
+          *.tgz|file:*|/*|./*) pkg="${MC_VERSION#file:}" ;;
+          *) pkg="mcpcheck@${MC_VERSION}" ;;
+        esac
         report="${RUNNER_TEMP}/mcpcheck.json"
 
         # Human-readable output goes to the log; the JSON run feeds the outputs
         # and the step summary. Both start the server; neither calls a tool.
         echo "::group::mcpcheck"
         status=0
-        npx --yes "$pkg" "${args[@]}" -- "${srv[@]}" || status=$?
+        npx --yes --package "$pkg" mcpcheck "${args[@]}" -- "${srv[@]}" || status=$?
         echo "::endgroup::"
 
         if [ "$status" -eq 2 ]; then
@@ -120,7 +125,7 @@ runs:
           exit 2
         fi
 
-        npx --yes "$pkg" "${args[@]}" --json -- "${srv[@]}" > "$report" 2>/dev/null || true
+        npx --yes --package "$pkg" mcpcheck "${args[@]}" --json -- "${srv[@]}" > "$report" 2>/dev/null || true
 
         if [ ! -s "$report" ]; then
           echo "::error::mcpcheck produced no report. Check the log above."

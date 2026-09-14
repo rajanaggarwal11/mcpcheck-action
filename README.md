@@ -28,7 +28,7 @@ The first run writes `mcpcheck.snapshot.json`. Commit it. From then on a renamed
 | `only` / `ignore`   |                          | Comma-separated rule ids.                                                                      |
 | `timeout`           | `15000`                  | Handshake timeout, ms.                                                                         |
 | `fail-on-findings`  | `true`                   | `false` reports without blocking. A server that cannot be inspected still fails the step.      |
-| `version`           | `latest`                 | mcpcheck version or dist-tag.                                                                  |
+| `version`           | `latest`                 | mcpcheck version or dist-tag, or the path of a packed tarball.                                 |
 | `working-directory` | `.`                      |                                                                                                |
 
 ## Outputs

@@ -14,14 +14,48 @@ permissions:
   contents: read
 
 jobs:
-  finds-problems:
-    name: reports a server with known problems
+  build-mcpcheck:
+    name: build mcpcheck from source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          repository: rajanaggarwal11/mcpcheck
+          path: mcpcheck
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: mcpcheck/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: |
+          cd mcpcheck
+          pnpm install --frozen-lockfile
+          pnpm build
+          mkdir -p "$RUNNER_TEMP/out"
+          pnpm pack --pack-destination "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcpcheck-tgz
+          path: ${{ runner.temp }}/out/*.tgz
+
+  finds-problems:
+    name: reports a server with known problems
+    runs-on: ubuntu-latest
+    needs: build-mcpcheck
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpcheck-tgz
+          path: ${{ runner.temp }}/mcpcheck
+      - id: tgz
+        shell: bash
+        run: echo "path=$(ls "$RUNNER_TEMP"/mcpcheck/*.tgz)" >> "$GITHUB_OUTPUT"
       - id: check
         uses: ./
         with:
+          version: ${{ steps.tgz.outputs.path }}
           server: node test/fixture/bad-server.mjs
           snapshot: ""
           fail-on-findings: false
@@ -36,12 +70,21 @@ jobs:
   fails-the-build:
     name: fails when findings remain
     runs-on: ubuntu-latest
+    needs: build-mcpcheck
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpcheck-tgz
+          path: ${{ runner.temp }}/mcpcheck
+      - id: tgz
+        shell: bash
+        run: echo "path=$(ls "$RUNNER_TEMP"/mcpcheck/*.tgz)" >> "$GITHUB_OUTPUT"
       - id: check
         continue-on-error: true
         uses: ./
         with:
+          version: ${{ steps.tgz.outputs.path }}
           server: node test/fixture/bad-server.mjs
           snapshot: ""
       - name: the default must block on an error-severity finding
@@ -53,11 +96,20 @@ jobs:
   clean-server:
     name: passes a clean reference server
     runs-on: ubuntu-latest
+    needs: build-mcpcheck
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpcheck-tgz
+          path: ${{ runner.temp }}/mcpcheck
+      - id: tgz
+        shell: bash
+        run: echo "path=$(ls "$RUNNER_TEMP"/mcpcheck/*.tgz)" >> "$GITHUB_OUTPUT"
       - id: check
         uses: ./
         with:
+          version: ${{ steps.tgz.outputs.path }}
           server: npx -y @modelcontextprotocol/server-memory
           snapshot: ""
       - shell: bash
@@ -68,11 +120,20 @@ jobs:
   scoping-works:
     name: --only narrows the run
     runs-on: ubuntu-latest
+    needs: build-mcpcheck
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpcheck-tgz
+          path: ${{ runner.temp }}/mcpcheck
+      - id: tgz
+        shell: bash
+        run: echo "path=$(ls "$RUNNER_TEMP"/mcpcheck/*.tgz)" >> "$GITHUB_OUTPUT"
       - id: check
         uses: ./
         with:
+          version: ${{ steps.tgz.outputs.path }}
           server: node test/fixture/bad-server.mjs
           snapshot: ""
           only: over-broad-tool
@@ -85,12 +146,21 @@ jobs:
   cannot-run-is-exit-2:
     name: a server that dies is a failed step, not a clean one
     runs-on: ubuntu-latest
+    needs: build-mcpcheck
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpcheck-tgz
+          path: ${{ runner.temp }}/mcpcheck
+      - id: tgz
+        shell: bash
+        run: echo "path=$(ls "$RUNNER_TEMP"/mcpcheck/*.tgz)" >> "$GITHUB_OUTPUT"
       - id: check
         continue-on-error: true
         uses: ./
         with:
+          version: ${{ steps.tgz.outputs.path }}
           server: node -e process.exit(3)
           snapshot: ""
           fail-on-findings: false

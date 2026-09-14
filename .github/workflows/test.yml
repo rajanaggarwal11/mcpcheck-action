@@ -1,0 +1,100 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Weekly, because the action fetches mcpcheck@latest: a regression in a new
+  # release of the package should show up here before a user hits it.
+  schedule:
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  finds-problems:
+    name: reports a server with known problems
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        uses: ./
+        with:
+          server: node test/fixture/bad-server.mjs
+          snapshot: ""
+          fail-on-findings: false
+      - name: the fixture has three error-severity problems and one warning
+        shell: bash
+        run: |
+          echo "server=${{ steps.check.outputs.server }} tools=${{ steps.check.outputs.tools }} errors=${{ steps.check.outputs.errors }} warnings=${{ steps.check.outputs.warnings }}"
+          [ "${{ steps.check.outputs.tools }}" = "4" ] || { echo "expected 4 tools"; exit 1; }
+          [ "${{ steps.check.outputs.errors }}" -ge 3 ] || { echo "expected at least 3 errors"; exit 1; }
+          [ "${{ steps.check.outputs.warnings }}" -ge 1 ] || { echo "expected a warning (ping has no annotations)"; exit 1; }
+
+  fails-the-build:
+    name: fails when findings remain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        continue-on-error: true
+        uses: ./
+        with:
+          server: node test/fixture/bad-server.mjs
+          snapshot: ""
+      - name: the default must block on an error-severity finding
+        shell: bash
+        run: |
+          [ "${{ steps.check.outcome }}" = "failure" ] || {
+            echo "expected the step to fail, got ${{ steps.check.outcome }}"; exit 1; }
+
+  clean-server:
+    name: passes a clean reference server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        uses: ./
+        with:
+          server: npx -y @modelcontextprotocol/server-memory
+          snapshot: ""
+      - shell: bash
+        run: |
+          [ "${{ steps.check.outputs.total }}" = "0" ] || {
+            echo "expected no findings on server-memory, got ${{ steps.check.outputs.total }}"; exit 1; }
+
+  scoping-works:
+    name: --only narrows the run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        uses: ./
+        with:
+          server: node test/fixture/bad-server.mjs
+          snapshot: ""
+          only: over-broad-tool
+          fail-on-findings: false
+      - shell: bash
+        run: |
+          [ "${{ steps.check.outputs.total }}" = "1" ] || {
+            echo "expected exactly run_shell, got ${{ steps.check.outputs.total }}"; exit 1; }
+
+  cannot-run-is-exit-2:
+    name: a server that dies is a failed step, not a clean one
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        continue-on-error: true
+        uses: ./
+        with:
+          server: node -e process.exit(3)
+          snapshot: ""
+          fail-on-findings: false
+      - shell: bash
+        run: |
+          [ "${{ steps.check.outcome }}" = "failure" ] || {
+            echo "fail-on-findings: false must not hide a server that could not be inspected"; exit 1; }

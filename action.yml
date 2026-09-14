@@ -1,0 +1,160 @@
+name: "mcpcheck"
+description: "Correctness checks for MCP servers — prompt-injection lint, contract drift, over-broad tools, dishonest annotations. Never calls a tool."
+author: "Rajan Aggarwal"
+
+branding:
+  icon: "shield"
+  color: "orange"
+
+inputs:
+  server:
+    description: >-
+      The command that starts your server over stdio (e.g. `node ./dist/server.js`),
+      or an http(s) URL for Streamable HTTP. Split on whitespace; no quoting.
+    required: true
+  version:
+    description: "Version of mcpcheck to run, as an npm dist-tag or exact version."
+    required: false
+    default: "latest"
+  working-directory:
+    description: "Directory to run in."
+    required: false
+    default: "."
+  snapshot:
+    description: >-
+      Path of the committed contract snapshot. The first run writes it; commit that file and
+      every later run fails on an unreviewed change to a tool. Empty skips contract-drift.
+    required: false
+    default: "mcpcheck.snapshot.json"
+  strict:
+    description: "Fail on warnings as well as errors."
+    required: false
+    default: "false"
+  only:
+    description: "Run only these rules (comma-separated rule ids)."
+    required: false
+    default: ""
+  ignore:
+    description: "Skip these rules (comma-separated rule ids)."
+    required: false
+    default: ""
+  timeout:
+    description: "Handshake timeout in milliseconds."
+    required: false
+    default: "15000"
+  fail-on-findings:
+    description: "Fail the step when findings remain. Set false to report without blocking."
+    required: false
+    default: "true"
+
+outputs:
+  total:
+    description: "Findings at error or warn severity."
+    value: ${{ steps.run.outputs.total }}
+  errors:
+    description: "Findings at error severity."
+    value: ${{ steps.run.outputs.errors }}
+  warnings:
+    description: "Findings at warn severity."
+    value: ${{ steps.run.outputs.warnings }}
+  tools:
+    description: "Number of tools the server advertises."
+    value: ${{ steps.run.outputs.tools }}
+  server:
+    description: "The server's name and version, as it reported them."
+    value: ${{ steps.run.outputs.server }}
+  report:
+    description: "Path to the JSON report on the runner."
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MC_SERVER: ${{ inputs.server }}
+        MC_VERSION: ${{ inputs.version }}
+        MC_SNAPSHOT: ${{ inputs.snapshot }}
+        MC_STRICT: ${{ inputs.strict }}
+        MC_ONLY: ${{ inputs.only }}
+        MC_IGNORE: ${{ inputs.ignore }}
+        MC_TIMEOUT: ${{ inputs.timeout }}
+        MC_FAIL: ${{ inputs.fail-on-findings }}
+      run: |
+        # GitHub runs a composite `shell: bash` step as `bash -e -o pipefail`
+        # whether or not the script asks for it. Under -e, the moment the CLI
+        # exits 1 with findings the step dies here — before the exit code is
+        # captured, before the JSON pass, before any output is written. So the
+        # exit code is captured on the same line, which -e leaves alone.
+
+        read -ra srv <<< "$MC_SERVER"
+        if [ "${#srv[@]}" -eq 0 ]; then
+          echo "::error::mcpcheck: the 'server' input is empty."
+          exit 2
+        fi
+
+        args=(--timeout "$MC_TIMEOUT")
+        [ "$MC_STRICT" = "true" ] && args+=(--strict)
+        [ -n "$MC_ONLY" ] && args+=(--only "$MC_ONLY")
+        [ -n "$MC_IGNORE" ] && args+=(--ignore "$MC_IGNORE")
+        if [ -n "$MC_SNAPSHOT" ]; then
+          args+=(--snapshot "$MC_SNAPSHOT")
+        else
+          args+=(--ignore "contract-drift${MC_IGNORE:+,$MC_IGNORE}")
+        fi
+
+        pkg="mcpcheck@${MC_VERSION}"
+        report="${RUNNER_TEMP}/mcpcheck.json"
+
+        # Human-readable output goes to the log; the JSON run feeds the outputs
+        # and the step summary. Both start the server; neither calls a tool.
+        echo "::group::mcpcheck"
+        status=0
+        npx --yes "$pkg" "${args[@]}" -- "${srv[@]}" || status=$?
+        echo "::endgroup::"
+
+        if [ "$status" -eq 2 ]; then
+          echo "::error::mcpcheck could not inspect the server. See the log above."
+          exit 2
+        fi
+
+        npx --yes "$pkg" "${args[@]}" --json -- "${srv[@]}" > "$report" 2>/dev/null || true
+
+        if [ ! -s "$report" ]; then
+          echo "::error::mcpcheck produced no report. Check the log above."
+          exit "${status:-2}"
+        fi
+
+        node -e '
+          const fs = require("fs");
+          const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          const s = r.summary;
+          const server = `${r.server.name} ${r.server.version}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,
+            `total=${s.total}\nerrors=${s.errors}\nwarnings=${s.warnings}\ntools=${r.tools.length}\nserver=${server}\nreport=${process.argv[1]}\n`);
+
+          const lines = ["## mcpcheck", "", `\`${server}\` · ${r.tools.length} tool(s)`, ""];
+          if (s.total === 0) {
+            lines.push("No problems found.");
+          } else {
+            lines.push(`**${s.total} finding(s)** — ${s.errors} error(s), ${s.warnings} warning(s).`, "");
+            lines.push("| | Rule | Tool | Problem |", "| --- | --- | --- | --- |");
+            const shown = r.findings.filter((f) => f.severity !== "info").slice(0, 40);
+            for (const f of shown) {
+              const icon = f.severity === "error" ? "🔴" : "🟡";
+              const msg = String(f.message).replace(/\|/g, "\\|");
+              lines.push(`| ${icon} | \`${f.rule}\` | ${f.tool ? "`" + f.tool + "`" : "_server_"} | ${msg} |`);
+            }
+            if (s.total > shown.length) lines.push(`| | | | …and ${s.total - shown.length} more |`);
+          }
+          const info = r.findings.filter((f) => f.severity === "info");
+          if (info.length) lines.push("", ...info.map((f) => `ℹ️ ${f.message}`));
+          if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+        ' "$report"
+
+        if [ "$MC_FAIL" != "true" ]; then
+          exit 0
+        fi
+        exit "${status:-0}"

@@ -13,9 +13,12 @@ inputs:
       or an http(s) URL for Streamable HTTP. Split on whitespace; no quoting.
     required: true
   version:
-    description: "Version of mcpcheck to run: an npm dist-tag or version, or the path of a packed tarball (to test an unreleased build)."
+    description: >-
+      Version of mcpcheck to run. Defaults to the exact version this release of the action
+      was tested with, so `@v1` always runs a known build. Set an exact version, an npm
+      dist-tag (`latest`), or the path of a packed tarball (to test an unreleased build).
     required: false
-    default: "latest"
+    default: "0.1.1"
   working-directory:
     description: "Directory to run in."
     required: false
@@ -82,6 +85,10 @@ runs:
         MC_IGNORE: ${{ inputs.ignore }}
         MC_TIMEOUT: ${{ inputs.timeout }}
         MC_FAIL: ${{ inputs.fail-on-findings }}
+        # The npm package and the command it installs. If the package is published under
+        # another name (a scope, say), this is the line to change.
+        MC_PACKAGE: "mcpcheck"
+        MC_BIN: "mcpcheck"
       run: |
         # GitHub runs a composite `shell: bash` step as `bash -e -o pipefail`
         # whether or not the script asks for it. Under -e, the moment the CLI
@@ -105,19 +112,25 @@ runs:
           args+=(--ignore "contract-drift${MC_IGNORE:+,$MC_IGNORE}")
         fi
 
-        # A dist-tag or version from npm, or a path to a packed tarball (a build
-        # of an unreleased mcpcheck — the self-test uses this).
+        # A version or dist-tag from npm, or a path to a packed tarball (a build of an
+        # unreleased mcpcheck — the self-test uses this). An exact package spec, so npx
+        # runs this package at this version and nothing else.
         case "$MC_VERSION" in
           *.tgz|file:*|/*|./*) pkg="${MC_VERSION#file:}" ;;
-          *) pkg="mcpcheck@${MC_VERSION}" ;;
+          *) pkg="${MC_PACKAGE}@${MC_VERSION}" ;;
         esac
         report="${RUNNER_TEMP}/mcpcheck.json"
 
-        # Human-readable output goes to the log; the JSON run feeds the outputs
-        # and the step summary. Both start the server; neither calls a tool.
+        # Human-readable output goes to the log; the JSON run feeds the outputs and the
+        # step summary. Both start the server; neither calls a tool. The server's stderr
+        # reaches the log, so workflow commands (::set-output::, ::add-mask:: ...) are
+        # switched off while it runs: a server cannot write annotations or outputs.
+        resume="$(node -e 'process.stdout.write(require("crypto").randomBytes(16).toString("hex"))')"
         echo "::group::mcpcheck"
+        echo "::stop-commands::${resume}"
         status=0
-        npx --yes --package "$pkg" mcpcheck "${args[@]}" -- "${srv[@]}" || status=$?
+        npx --yes --package "$pkg" "$MC_BIN" "${args[@]}" -- "${srv[@]}" || status=$?
+        echo "::${resume}::"
         echo "::endgroup::"
 
         if [ "$status" -eq 2 ]; then
@@ -125,39 +138,14 @@ runs:
           exit 2
         fi
 
-        npx --yes --package "$pkg" mcpcheck "${args[@]}" --json -- "${srv[@]}" > "$report" 2>/dev/null || true
+        npx --yes --package "$pkg" "$MC_BIN" "${args[@]}" --json -- "${srv[@]}" > "$report" 2>/dev/null || true
 
         if [ ! -s "$report" ]; then
           echo "::error::mcpcheck produced no report. Check the log above."
           exit "${status:-2}"
         fi
 
-        node -e '
-          const fs = require("fs");
-          const r = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-          const s = r.summary;
-          const server = `${r.server.name} ${r.server.version}`;
-          fs.appendFileSync(process.env.GITHUB_OUTPUT,
-            `total=${s.total}\nerrors=${s.errors}\nwarnings=${s.warnings}\ntools=${r.tools.length}\nserver=${server}\nreport=${process.argv[1]}\n`);
-
-          const lines = ["## mcpcheck", "", `\`${server}\` · ${r.tools.length} tool(s)`, ""];
-          if (s.total === 0) {
-            lines.push("No problems found.");
-          } else {
-            lines.push(`**${s.total} finding(s)** — ${s.errors} error(s), ${s.warnings} warning(s).`, "");
-            lines.push("| | Rule | Tool | Problem |", "| --- | --- | --- | --- |");
-            const shown = r.findings.filter((f) => f.severity !== "info").slice(0, 40);
-            for (const f of shown) {
-              const icon = f.severity === "error" ? "🔴" : "🟡";
-              const msg = String(f.message).replace(/\|/g, "\\|");
-              lines.push(`| ${icon} | \`${f.rule}\` | ${f.tool ? "`" + f.tool + "`" : "_server_"} | ${msg} |`);
-            }
-            if (s.total > shown.length) lines.push(`| | | | …and ${s.total - shown.length} more |`);
-          }
-          const info = r.findings.filter((f) => f.severity === "info");
-          if (info.length) lines.push("", ...info.map((f) => `ℹ️ ${f.message}`));
-          if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
-        ' "$report"
+        node "$GITHUB_ACTION_PATH/lib/report.mjs" "$report"
 
         if [ "$MC_FAIL" != "true" ]; then
           exit 0

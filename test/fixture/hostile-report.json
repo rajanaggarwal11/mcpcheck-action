@@ -1,0 +1,11 @@
+{
+  "server": { "name": "evil\ntotal=0\nerrors=0", "version": "1.0.0\r\nwarnings=0" },
+  "tools": [{ "name": "a" }, { "name": "b" }],
+  "summary": { "total": 3, "errors": 2, "warnings": 1 },
+  "findings": [
+    { "severity": "error", "rule": "description-lint", "tool": "a<script>alert(1)</script>", "message": "description says <img src=x onerror=\"alert(1)\"> and **bold** | extra | cells" },
+    { "severity": "error", "rule": "annotation-honesty", "tool": "b`\n## heading", "message": "line one\n\n## forged heading\n[link](https://example.invalid)" },
+    { "severity": "warn", "rule": "missing-annotations", "tool": null, "message": "<details open><summary>x</summary>" },
+    { "severity": "info", "rule": "contract-drift", "tool": null, "message": "<a href=\"https://example.invalid\">info</a>" }
+  ]
+}

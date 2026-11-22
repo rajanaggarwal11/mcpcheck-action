@@ -4,6 +4,7 @@ Runs [mcpcheck](https://github.com/rajanaggarwal11/mcpcheck) against your MCP se
 
 ```yaml
 - uses: actions/checkout@v7
+  with: { persist-credentials: false }
 - uses: actions/setup-node@v7
   with: { node-version: 22 }
 - run: npm ci && npm run build
@@ -13,6 +14,22 @@ Runs [mcpcheck](https://github.com/rajanaggarwal11/mcpcheck) against your MCP se
 ```
 
 The step fails when findings remain, writes a table to the job summary, and exposes counts as outputs.
+
+`@v1` follows the latest v1 release. To run exactly the code you reviewed, pin the full commit SHA of a release tag, with the tag in a comment so Dependabot can update it:
+
+```yaml
+- uses: rajanaggarwal11/mcpcheck-action@<commit-sha> # v1.x.y
+```
+
+`git ls-remote https://github.com/rajanaggarwal11/mcpcheck-action 'refs/tags/v1*'` lists the tags and their SHAs.
+
+## Which mcpcheck runs
+
+Each release of the action runs one exact mcpcheck version, the one its tests ran against: `0.1.1` for this release. Set `version` to run another (`0.1.2`, or `latest` to follow npm).
+
+## A server you do not trust
+
+The server's name, version, tool names and descriptions all come from the server. The action treats them as untrusted: outputs are written one line each with a random delimiter, so a newline in a server name cannot set another output; the summary escapes HTML and Markdown; and workflow commands are switched off while the server runs, so its stderr cannot write annotations or outputs. The test suite runs a server that tries all three.
 
 ## Contract drift
 
@@ -28,7 +45,7 @@ The first run writes `mcpcheck.snapshot.json`. Commit it. From then on a renamed
 | `only` / `ignore`   |                          | Comma-separated rule ids.                                                                      |
 | `timeout`           | `15000`                  | Handshake timeout, ms.                                                                         |
 | `fail-on-findings`  | `true`                   | `false` reports without blocking. A server that cannot be inspected still fails the step.      |
-| `version`           | `latest`                 | mcpcheck version or dist-tag, or the path of a packed tarball.                                 |
+| `version`           | `0.1.1`                  | mcpcheck version: exact, a dist-tag such as `latest`, or the path of a packed tarball.         |
 | `working-directory` | `.`                      |                                                                                                |
 
 ## Outputs

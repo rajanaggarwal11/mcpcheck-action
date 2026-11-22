@@ -27,9 +27,13 @@ The step fails when findings remain, writes a table to the job summary, and expo
 
 Each release of the action runs one exact mcpcheck version, the one its tests ran against: `0.1.1` for this release. Set `version` to run another (`0.1.2`, or `latest` to follow npm).
 
-## A server you do not trust
+## Servers you do not control
 
-The server's name, version, tool names and descriptions all come from the server. The action treats them as untrusted: outputs are written one line each with a random delimiter, so a newline in a server name cannot set another output; the summary escapes HTML and Markdown; and workflow commands are switched off while the server runs, so its stderr cannot write annotations or outputs. The test suite runs a server that tries all three.
+The server's name, version, tool names and descriptions come from the server. The action treats them as data: outputs are written one line each with a random delimiter, so a newline in a server name cannot set another output; the summary escapes HTML and Markdown; and workflow commands are switched off while the server runs. The test suite runs a server that tries all three.
+
+That protects you from a hostile **remote** server (an `http(s)` URL) and from hostile tool metadata. It does not make it safe to run **local** server code you do not trust: a stdio server is a program on the runner, with the same access as every other step in the job. It can write the job's output and environment files directly, or change the action's own files. Run untrusted server code in a separate job with no secrets and read-only permissions, or in a container.
+
+Outputs such as `server` are still text chosen by the server. Pass them to a shell through `env:`, never by putting `${{ }}` inside `run:`, as in the example below.
 
 ## Contract drift
 
@@ -56,7 +60,11 @@ The first run writes `mcpcheck.snapshot.json`. Commit it. From then on a renamed
 - id: mcp
   uses: rajanaggarwal11/mcpcheck-action@v1
   with: { server: node ./dist/server.js, fail-on-findings: false }
-- run: echo "${{ steps.mcp.outputs.server }} advertises ${{ steps.mcp.outputs.tools }} tools, ${{ steps.mcp.outputs.errors }} errors"
+- env: # outputs go through env, never into the script itself: the server chose its name
+    SERVER: ${{ steps.mcp.outputs.server }}
+    TOOLS: ${{ steps.mcp.outputs.tools }}
+    ERRORS: ${{ steps.mcp.outputs.errors }}
+  run: echo "$SERVER advertises $TOOLS tools, $ERRORS errors"
 ```
 
 ## Exit codes

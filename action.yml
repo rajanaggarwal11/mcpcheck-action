@@ -85,6 +85,10 @@ runs:
         MC_IGNORE: ${{ inputs.ignore }}
         MC_TIMEOUT: ${{ inputs.timeout }}
         MC_FAIL: ${{ inputs.fail-on-findings }}
+        # The npm package and the command it installs. If the package is published under
+        # another name (a scope, say), this is the line to change.
+        MC_PACKAGE: "mcpcheck"
+        MC_BIN: "mcpcheck"
       run: |
         # GitHub runs a composite `shell: bash` step as `bash -e -o pipefail`
         # whether or not the script asks for it. Under -e, the moment the CLI
@@ -113,7 +117,7 @@ runs:
         # runs this package at this version and nothing else.
         case "$MC_VERSION" in
           *.tgz|file:*|/*|./*) pkg="${MC_VERSION#file:}" ;;
-          *) pkg="mcpcheck@${MC_VERSION}" ;;
+          *) pkg="${MC_PACKAGE}@${MC_VERSION}" ;;
         esac
         report="${RUNNER_TEMP}/mcpcheck.json"
 
@@ -125,7 +129,7 @@ runs:
         echo "::group::mcpcheck"
         echo "::stop-commands::${resume}"
         status=0
-        npx --yes --package "$pkg" mcpcheck "${args[@]}" -- "${srv[@]}" || status=$?
+        npx --yes --package "$pkg" "$MC_BIN" "${args[@]}" -- "${srv[@]}" || status=$?
         echo "::${resume}::"
         echo "::endgroup::"
 
@@ -134,7 +138,7 @@ runs:
           exit 2
         fi
 
-        npx --yes --package "$pkg" mcpcheck "${args[@]}" --json -- "${srv[@]}" > "$report" 2>/dev/null || true
+        npx --yes --package "$pkg" "$MC_BIN" "${args[@]}" --json -- "${srv[@]}" > "$report" 2>/dev/null || true
 
         if [ ! -s "$report" ]; then
           echo "::error::mcpcheck produced no report. Check the log above."

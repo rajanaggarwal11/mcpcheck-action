@@ -121,7 +121,7 @@ jobs:
         uses: ./
         with:
           version: ${{ steps.tgz.outputs.path }}
-          server: npx -y @modelcontextprotocol/server-memory
+          server: npx -y @modelcontextprotocol/server-memory@2.2.1
           snapshot: ""
       - shell: bash
         env:
